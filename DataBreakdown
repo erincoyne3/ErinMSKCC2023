@@ -1,0 +1,584 @@
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy.stats import linregress
+from scipy.stats import ttest_ind
+import statsmodels.stats.multitest as smm
+import math
+
+dfPPC = pd.read_csv('/Users/erincoyne/Desktop/MSKCC data/debatched_zscores.csv')
+dfPrism = pd.read_csv('/Users/erincoyne/Desktop/Drug_sensitivity_(PRISM_Repurposing_Primary_Screen).csv')
+dfGDSC = pd.read_csv('/Users/erincoyne/Desktop/merged.csv')
+dfCTD = pd.read_csv('/Users/erincoyne/Desktop/Drug_sensitivity_AUC_(CTD^2).csv')
+dfOnco = pd.read_csv('/Users/erincoyne/Desktop/celllin&onco.csv')
+dfDrugRegimine = pd.read_csv('/Users/erincoyne/Desktop/PreferredRegimine.csv')
+
+dfCTDWOnco = pd.merge(dfOnco, dfCTD, on='cell_line_display_name', how='inner')
+dfPrismWOnco = pd.merge(dfOnco, dfPrism, on='cell_line_display_name', how='inner')
+
+dfGDSC.columns = dfGDSC.columns.str.lower().str.split().str[0]
+dfGDSC.columns = dfGDSC.columns.str.capitalize()
+#fill nan values with 0.0 (taken out during average and ttest calculations)
+dfGDSC = dfGDSC.replace('', np.nan).fillna(0.0)
+columns_to_drop = ['Unnamed:','Cell_line_display_name', 'Depmap_id', 'Lineage_1', 'Lineage_2', 'Lineage_3', 'Lineage_4', 'Lineage_5', 'Lineage_6',
+                  'Name', 'Cellosaurus_id']
+dfGDSC = dfGDSC.drop(columns=columns_to_drop, inplace=False)
+
+dfPrismWOnco.columns = dfPrismWOnco.columns.str.lower().str.split().str[0]
+dfPrismWOnco.columns = dfPrismWOnco.columns.str.capitalize()
+#fill nan values with 0.0 (taken out during average and ttest calculations)
+dfPrismWOnco = dfPrismWOnco.replace('', np.nan).fillna(0.0)
+columns_to_drop = ['Cell_line_display_name', 'Depmap_id', 'Lineage_1', 'Lineage_2', 'Lineage_3', 'Lineage_4', 'Lineage_5', 'Lineage_6']
+dfPrismWOnco = dfPrismWOnco.drop(columns=columns_to_drop, inplace=False)
+
+dfCTDWOnco.columns = dfCTDWOnco.columns.str.lower().str.split().str[0]
+dfCTDWOnco.columns = dfCTDWOnco.columns.str.capitalize()
+#fill nan values with 0.0 (taken out during average and ttest calculations)
+dfCTDWOnco = dfCTDWOnco.replace('', np.nan).fillna(0.0)
+columns_to_drop = ['Cell_line_display_name', 'Depmap_id', 'Lineage_1', 'Lineage_2', 'Lineage_3', 'Lineage_4', 'Lineage_5', 'Lineage_6']
+dfCTDWOnco = dfCTDWOnco.drop(columns=columns_to_drop, inplace=False)
+
+
+PPCdrugs = set(dfPPC['drug_name'])
+GDSCdrugs = dfGDSC.columns
+PRISMdrugs = dfPrismWOnco.columns
+CTDdrugs = dfCTDWOnco.columns
+
+PPCcancer = set(dfPPC['oncotree_code'])
+GDSCcancer = set(dfGDSC['Oncotree_code'])
+PRISMcancer = set(dfPrismWOnco['Oncotree_code'])
+CTDcancer = set(dfCTDWOnco['Oncotree_code'])
+
+sharedDrugs = [value for value in set(PPCdrugs) if (value in GDSCdrugs) or (value in PRISMdrugs) or (value in CTDdrugs)]
+sharedCancer = [value for value in set(PPCcancer) if (value in GDSCcancer) or (value in PRISMcancer) or (value in CTDcancer)]
+
+#AVERAGE OF LIST FUNCTION
+def Average(lst):
+    #filter out empty strings set to 0
+    filtered_list = [x for x in lst if x != 0.0]
+    if len(filtered_list) > 0:
+        return sum(filtered_list) / len(filtered_list)
+    else:
+        return 0
+
+#PPC DICTS OF MEAN VALUE AND PVALUES
+PPCspecificDrugs = set(PPCdrugs).intersection(sharedDrugs)
+PPCspecificCancer = set(PPCcancer).intersection(sharedCancer)
+
+PPCmeandct = {}
+for i in PPCspecificCancer:
+    for j in PPCspecificDrugs:
+        PPCmeandct[f'ppcmean_{i}_{j}'] = []
+
+PPCpvaluedct = {}
+for i in PPCspecificCancer:
+    for j in PPCspecificDrugs:
+        PPCpvaluedct[f'ppcpvalue_{i}_{j}'] = []
+
+for i in PPCspecificCancer:
+    for j in PPCspecificDrugs:
+        new_list = []
+        allOtherPPCDrugScores = []
+        
+        new_list = (dfPPC[(dfPPC['oncotree_code'] == i) & (dfPPC['drug_name'] == j)]['zscore']).to_list()
+        new_list = list(map(float, new_list))
+        new_list = [num for num in new_list if num != 0.0]
+
+        
+        allOtherPPCDrugScores = (dfPPC[(dfPPC['oncotree_code'] != i) & (dfPPC['drug_name'] == j)]['zscore']).to_list()
+        allOtherPPCDrugScores = [num for num in allOtherPPCDrugScores if num != 0.0]
+        allOtherPPCDrugScores = [z for z in allOtherPPCDrugScores if z not in new_list]
+        
+        PPCmeandct[f"ppcmean_{i}_{j}"] = ((Average(new_list) - Average(allOtherPPCDrugScores)))
+        
+        array1 = np.array(new_list)
+        array2 = np.array(allOtherPPCDrugScores)
+
+        # Perform the t-test
+        t_stat, p_value = ttest_ind(array1, array2, equal_var=False)
+        
+        PPCpvaluedct[f'ppcpvalue_{i}_{j}'] = p_value
+
+#GDSCdicts
+GDSCspecificDrugs = set(GDSCdrugs).intersection(PPCdrugs)
+GDSCspecificCancer = set(GDSCcancer).intersection(PPCcancer)
+
+GDSCmeandct = {}
+for i in GDSCspecificCancer:
+    for j in GDSCspecificDrugs:
+        GDSCmeandct[f'gdscmean_{i}_{j}'] = []
+
+GDSCpvaluedct = {}
+for i in GDSCspecificCancer:
+    for j in GDSCspecificDrugs:
+        GDSCpvaluedct[f'gdscpvalue_{i}_{j}'] = []
+
+GDSCdct = {}
+for i in GDSCspecificCancer:
+    for j in GDSCspecificDrugs:
+        GDSCdct[f'GDSC_{i}_{j}'] = []
+
+for col_index, col_name in enumerate(dfGDSC.columns):
+    for idx, value in enumerate(dfGDSC.itertuples(index=False, name=None)):
+            cancer = dfGDSC['Oncotree_code'][idx]
+            col_name = col_name.capitalize()
+            dictKey = f'GDSC_{cancer}_{col_name}'
+            if dictKey in GDSCdct and GDSCdct[dictKey]:
+                GDSCdct[dictKey].append(value[col_index])
+            elif dictKey in GDSCdct:
+                GDSCdct[dictKey] = [value[col_index]]
+
+for key in GDSCdct.keys():
+    parts = key.split("_")
+    cancer = parts[1]
+    drug = parts[2]
+    drug = drug.capitalize()
+
+    new_list = GDSCdct[key]
+    new_list = [num for num in new_list if num != 0.0]
+    avg = Average(new_list)
+
+    otherData = [float(value) for value in dfGDSC[drug] if isinstance(value, (int, float))]
+    otherData = [num for num in otherData if num != 0.0]
+    otherData = [z for z in otherData if z not in new_list]
+    otherAvg = Average(otherData)
+
+    GDSCmeandct[f"gdscmean_{cancer}_{drug}"] = (avg-otherAvg)
+    
+    my_list_without_nan1 = [value for value in new_list if not np.isnan(value)]
+    my_list_without_nan2 = [value for value in otherData if not np.isnan(value)]
+    
+    array1 = np.array(my_list_without_nan1)
+    array2 = np.array(my_list_without_nan2)
+
+    # Perform the t-test
+    t_stat, p_value = ttest_ind(array1, array2, equal_var=False)
+    
+    drug = drug.capitalize()
+    GDSCpvaluedct[f'gdscpvalue_{cancer}_{drug}'] = p_value
+
+#PRISMdicts
+PRISMspecificDrugs = set(PRISMdrugs).intersection(PPCdrugs)
+PRISMspecificCancer = set(PRISMcancer).intersection(PPCcancer)
+
+PRISMmeandct = {}
+for i in PRISMspecificCancer:
+    for j in PRISMspecificDrugs:
+        PRISMmeandct[f'prismmean_{i}_{j}'] = []
+
+PRISMpvaluedct = {}
+for i in PRISMspecificCancer:
+    for j in PRISMspecificDrugs:
+        PRISMpvaluedct[f'prismpvalue_{i}_{j}'] = []
+
+PRISMdct = {}
+for i in PRISMspecificCancer:
+    for j in PRISMspecificDrugs:
+        PRISMdct[f'PRISM_{i}_{j}'] = []
+
+PRISMspecificDrugs = list(PRISMspecificDrugs)
+df_filtered = dfPrismWOnco[PRISMspecificDrugs]
+FilteredPRISMDf = df_filtered[df_filtered['Oncotree_code'].isin(PRISMspecificCancer)]
+FilteredPRISMDf.reset_index(drop=True, inplace = True)
+for col_index, col_name in enumerate(FilteredPRISMDf.columns):
+    for idx, value in enumerate(FilteredPRISMDf.itertuples(index=False, name=None)):
+            cancer = FilteredPRISMDf['Oncotree_code'][idx]
+            col_name = col_name.capitalize()
+            dictKey = f'PRISM_{cancer}_{col_name}'
+            if dictKey in PRISMdct and PRISMdct[dictKey]:
+                PRISMdct[dictKey].append(value[col_index])
+            elif dictKey in PRISMdct:
+                PRISMdct[dictKey] = [value[col_index]]
+
+for key in PRISMdct.keys():
+    parts = key.split("_")
+    cancer = parts[1]
+    drug = parts[2]
+    drug = drug.capitalize()
+
+    new_list = PRISMdct[key]
+    new_list = [num for num in new_list if num != 0.0]
+    avg = Average(new_list)
+
+    otherData = [float(value) for value in dfPrismWOnco[drug] if isinstance(value, (int, float))]
+    otherData = [num for num in otherData if num != 0.0]
+    otherData = [z for z in otherData if z not in new_list]
+    otherAvg = Average(otherData)
+
+    PRISMmeandct[f"prismmean_{cancer}_{drug}"] = (avg-otherAvg)
+    
+    my_list_without_nan1 = [value for value in new_list if not np.isnan(value)]
+    my_list_without_nan2 = [value for value in otherData if not np.isnan(value)]
+    
+    array1 = np.array(my_list_without_nan1)
+    array2 = np.array(my_list_without_nan2)
+
+    # Perform the t-test
+    t_stat, p_value = ttest_ind(array1, array2, equal_var=False)
+    
+    drug = drug.capitalize()
+    PRISMpvaluedct[f'prismpvalue_{cancer}_{drug}'] = p_value
+
+#CTDdicts
+CTDspecificDrugs = set(CTDdrugs).intersection(PPCdrugs)
+CTDspecificCancer = set(CTDcancer).intersection(PPCcancer)
+
+CTDmeandct = {}
+for i in CTDspecificCancer:
+    for j in CTDspecificDrugs:
+        CTDmeandct[f'ctdmean_{i}_{j}'] = []
+
+CTDpvaluedct = {}
+for i in CTDspecificCancer:
+    for j in CTDspecificDrugs:
+        CTDpvaluedct[f'ctdpvalue_{i}_{j}'] = []
+
+CTDdct = {}
+for i in CTDspecificCancer:
+    for j in CTDspecificDrugs:
+        CTDdct[f'CTD_{i}_{j}'] = []
+
+CTDspecificDrugs = list(CTDspecificDrugs)
+CTDspecificDrugs.append('Oncotree_code')
+df_filtered = dfCTDWOnco[CTDspecificDrugs]
+FilteredCTDDf = df_filtered[df_filtered['Oncotree_code'].isin(CTDspecificCancer)]
+FilteredCTDDf.reset_index(drop=True, inplace = True)
+for col_index, col_name in enumerate(FilteredCTDDf.columns):
+    for idx, value in enumerate(FilteredCTDDf.itertuples(index=False, name=None)):
+            cancer = dfCTDWOnco['Oncotree_code'][idx]
+            col_name = col_name.capitalize()
+            dictKey = f'CTD_{cancer}_{col_name}'
+            if dictKey in CTDdct and CTDdct[dictKey]:
+                CTDdct[dictKey].append(value[col_index])
+            elif dictKey in CTDdct:
+                CTDdct[dictKey] = [value[col_index]]
+
+for key in CTDdct.keys():
+    parts = key.split("_")
+    cancer = parts[1]
+    drug = parts[2]
+    drug = drug.capitalize()
+
+    new_list = CTDdct[key]
+    new_list = [num for num in new_list if num != 0.0]
+    avg = Average(new_list)
+
+    otherData = [float(value) for value in dfCTDWOnco[drug] if isinstance(value, (int, float))]
+    otherData = [num for num in otherData if num != 0.0]
+    otherData = [z for z in otherData if z not in new_list]
+    otherAvg = Average(otherData)
+
+    CTDmeandct[f"ctdmean_{cancer}_{drug}"] = (avg-otherAvg)
+    
+    my_list_without_nan1 = [value for value in new_list if not np.isnan(value)]
+    my_list_without_nan2 = [value for value in otherData if not np.isnan(value)]
+    
+    array1 = np.array(my_list_without_nan1)
+    array2 = np.array(my_list_without_nan2)
+
+    # Perform the t-test
+    t_stat, p_value = ttest_ind(array1, array2, equal_var=False)
+    
+    drug = drug.capitalize()
+    CTDpvaluedct[f'ctdpvalue_{cancer}_{drug}'] = p_value
+
+#DF GENERATION    
+PPCcancerList = []
+PPCdrugList = []
+PPCmeanAvgList = []
+PPCpvalueList = []
+PPCqvalueList = []
+
+for i in PPCspecificCancer:
+    pattern = i
+    filteredPPCMean_keys = {key: value for key, value in PPCmeandct.items() if key.split('_')[1] == pattern}
+    filteredPPCPvalue_keys = {key: value for key, value in PPCpvaluedct.items() if key.split('_')[1] == pattern}
+    
+    keysList = (list(filteredPPCMean_keys))
+    
+    drugs_list = [string.split('_')[-1] for string in keysList]
+    cancer_list = [string.split('_')[1] for string in keysList]
+    
+    for items in drugs_list:
+        PPCdrugList.append(items)
+    
+    PPCdrugList = [word.title() for word in PPCdrugList]
+
+    for items in cancer_list:
+        PPCcancerList.append(items)
+    
+    
+    PPCmean_list = list(filteredPPCMean_keys.values())
+    PPCpvalue_list = list(filteredPPCPvalue_keys.values())
+    
+    
+    j = 0
+    while j < len(PPCmean_list):
+        if not isinstance(PPCmean_list[j], float):
+            del PPCmean_list[j]
+            del PPCdrugList[j]
+            del PPCpvalue_list[j]
+            del PPCcancerList[j]
+        else:
+            j += 1
+    
+    
+    for items in PPCmean_list:
+        PPCmeanAvgList.append(-items)
+    
+    for items in PPCpvalue_list:
+        PPCpvalueList.append(items)
+    
+    x = np.array(PPCmean_list)
+    y = np.array(PPCpvalue_list)
+    
+    _, q_values, _, _ = smm.multipletests(y, method='fdr_bh')
+    significance_threshold = 0.05
+    
+    qvalue_list = list((-np.log10(q_values)))
+    
+    for items in qvalue_list:
+        PPCqvalueList.append(items)
+    
+    y = np.array(q_values)
+
+#DF GENERATION    
+GDSCcancerList = []
+GDSCdrugList = []
+GDSCmeanAvgList = []
+GDSCpvalueList = []
+GDSCqvalueList = []
+
+for i in GDSCspecificCancer:
+    pattern = i
+    filteredGDSCMean_keys = {key: value for key, value in GDSCmeandct.items() if key.split('_')[1] == pattern}
+    filteredGDSCPvalue_keys = {key: value for key, value in GDSCpvaluedct.items() if key.split('_')[1] == pattern}
+    
+    keysList = (list(filteredGDSCMean_keys))
+    
+    drugs_list = [string.split('_')[-1] for string in keysList]
+    cancer_list = [string.split('_')[1] for string in keysList]
+    
+    for items in drugs_list:
+        GDSCdrugList.append(items)
+    
+    GDSCdrugList = [word.title() for word in GDSCdrugList]
+
+    for items in cancer_list:
+        GDSCcancerList.append(items)
+    
+    
+    GDSCmean_list = list(filteredGDSCMean_keys.values())
+    GDSCpvalue_list = list(filteredGDSCPvalue_keys.values())
+    
+    
+    j = 0
+    while j < len(GDSCpvalue_list):
+        if not isinstance(GDSCpvalue_list[j], float) or math.isnan(GDSCpvalue_list[j]):
+            del GDSCmean_list[j]
+            del GDSCdrugList[j]
+            del GDSCpvalue_list[j]
+            del GDSCcancerList[j]
+        else:
+            j += 1
+    
+    
+    for items in GDSCmean_list:
+        GDSCmeanAvgList.append(-items)
+    
+    for items in GDSCpvalue_list:
+        GDSCpvalueList.append(items)
+        
+    #GDSCmean_list = list(filter(lambda x: not math.isnan(x), GDSCmean_list))
+    #GDSCpvalue_list = list(filter(lambda x: not math.isnan(x), GDSCpvalue_list))
+    
+    x = np.array(GDSCmean_list)
+    y = np.array(GDSCpvalue_list)
+    
+    _, q_values, _, _ = smm.multipletests(y, method='fdr_bh')
+    significance_threshold = 0.05
+    
+    qvalue_list = list((-np.log10(q_values)))
+    
+    for items in qvalue_list:
+        GDSCqvalueList.append(items)
+    
+    y = np.array(q_values)
+
+#DF GENERATION    
+PRISMcancerList = []
+PRISMdrugList = []
+PRISMmeanAvgList = []
+PRISMpvalueList = []
+PRISMqvalueList = []
+
+for i in PRISMspecificCancer:
+    pattern = i
+    filteredPRISMMean_keys = {key: value for key, value in PRISMmeandct.items() if key.split('_')[1] == pattern}
+    filteredPRISMPvalue_keys = {key: value for key, value in PRISMpvaluedct.items() if key.split('_')[1] == pattern}
+    
+    keysList = (list(filteredPRISMMean_keys))
+    
+    drugs_list = [string.split('_')[-1] for string in keysList]
+    cancer_list = [string.split('_')[1] for string in keysList]
+    
+    for items in drugs_list:
+        PRISMdrugList.append(items)
+    
+    PRISMdrugList = [word.title() for word in PRISMdrugList]
+
+    for items in cancer_list:
+        PRISMcancerList.append(items)
+    
+    
+    PRISMmean_list = list(filteredPRISMMean_keys.values())
+    PRISMpvalue_list = list(filteredPRISMPvalue_keys.values())
+    
+    
+    j = 0
+    while j < len(PRISMpvalue_list):
+        if not isinstance(PRISMpvalue_list[j], float) or math.isnan(PRISMpvalue_list[j]):
+            del PRISMmean_list[j]
+            del PRISMdrugList[j]
+            del PRISMpvalue_list[j]
+            del PRISMcancerList[j]
+        else:
+            j += 1
+    
+    
+    for items in PRISMmean_list:
+        PRISMmeanAvgList.append(-items)
+    
+    for items in PRISMpvalue_list:
+        PRISMpvalueList.append(items)
+        
+    #GDSCmean_list = list(filter(lambda x: not math.isnan(x), GDSCmean_list))
+    #GDSCpvalue_list = list(filter(lambda x: not math.isnan(x), GDSCpvalue_list))
+    
+    x = np.array(PRISMmean_list)
+    y = np.array(PRISMpvalue_list)
+    
+    _, q_values, _, _ = smm.multipletests(y, method='fdr_bh')
+    significance_threshold = 0.05
+    
+    qvalue_list = list((-np.log10(q_values)))
+    
+    for items in qvalue_list:
+        PRISMqvalueList.append(items)
+    
+    y = np.array(q_values)
+
+#DF GENERATION    
+CTDcancerList = []
+CTDdrugList = []
+CTDmeanAvgList = []
+CTDpvalueList = []
+CTDqvalueList = []
+
+for i in CTDspecificCancer:
+    pattern = i
+    filteredCTDMean_keys = {key: value for key, value in CTDmeandct.items() if key.split('_')[1] == pattern}
+    filteredCTDPvalue_keys = {key: value for key, value in CTDpvaluedct.items() if key.split('_')[1] == pattern}
+    
+    keysList = (list(filteredCTDMean_keys))
+    
+    drugs_list = [string.split('_')[-1] for string in keysList]
+    cancer_list = [string.split('_')[1] for string in keysList]
+    
+    for items in drugs_list:
+        CTDdrugList.append(items)
+    
+    CTDdrugList = [word.title() for word in CTDdrugList]
+
+    for items in cancer_list:
+        CTDcancerList.append(items)
+    
+    
+    CTDmean_list = list(filteredCTDMean_keys.values())
+    CTDpvalue_list = list(filteredCTDPvalue_keys.values())
+    
+    
+    j = 0
+    while j < len(CTDpvalue_list):
+        if not isinstance(CTDpvalue_list[j], float) or math.isnan(CTDpvalue_list[j]):
+            del CTDmean_list[j]
+            del CTDdrugList[j]
+            del CTDpvalue_list[j]
+            del CTDcancerList[j]
+        else:
+            j += 1
+    
+    
+    for items in CTDmean_list:
+        CTDmeanAvgList.append(-items)
+    
+    for items in CTDpvalue_list:
+        CTDpvalueList.append(items)
+        
+    #GDSCmean_list = list(filter(lambda x: not math.isnan(x), GDSCmean_list))
+    #GDSCpvalue_list = list(filter(lambda x: not math.isnan(x), GDSCpvalue_list))
+    
+    x = np.array(CTDmean_list)
+    y = np.array(CTDpvalue_list)
+    print(i)
+    _, q_values, _, _ = smm.multipletests(y, method='fdr_bh')
+    significance_threshold = 0.05
+    
+    qvalue_list = list((-np.log10(q_values)))
+    
+    for items in qvalue_list:
+        CTDqvalueList.append(items)
+    
+    y = np.array(q_values)
+
+data1 = {
+    'cancer' : PPCcancerList,
+    'drug' : PPCdrugList,
+    'PPCmeanavg' : PPCmeanAvgList,
+    'PPCqvalue' : PPCqvalueList
+}
+
+df1 = pd.DataFrame(data1)
+
+df1.to_csv('ppcprocessed.csv', index=False)
+
+
+data2 = {
+    'cancer' : GDSCcancerList,
+    'drug' : GDSCdrugList,
+    'GDSDmeanavg' : GDSCmeanAvgList,
+    'GDSDqvalue' : GDSCqvalueList
+}
+
+df2 = pd.DataFrame(data2)
+
+df2.to_csv('GDSDsecondprocessed.csv', index=False)
+
+
+data3 = {
+    'cancer' : PRISMcancerList,
+    'drug' : PRISMdrugList,
+    'PRISMmeanavg' : PRISMmeanAvgList,
+    'PRISMqvalue' : PRISMqvalueList
+}
+
+df3 = pd.DataFrame(data3)
+
+df3.to_csv('PRISMsecondprocessed.csv', index=False)
+
+data4 = {
+    'cancer' : CTDcancerList,
+    'drug' : CTDdrugList,
+    'CTDmeanavg' : CTDmeanAvgList,
+    'CTDqvalue' : CTDqvalueList
+}
+
+df4 = pd.DataFrame(data4)
+
+df4.to_csv('CTDsecondprocessed.csv', index=False)
+
+merged_df = pd.merge(df1, df2, on=['cancer', 'drug'], how='left')
+merged_df = pd.merge(merged_df, df3, on=['cancer', 'drug'], how='left')
+merged_df = pd.merge(merged_df, df4, on=['cancer', 'drug'], how='left')
+
+merged_df.to_csv('Rdata.csv', index=False)

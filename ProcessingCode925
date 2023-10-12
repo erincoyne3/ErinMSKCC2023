@@ -1,0 +1,93 @@
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from scipy.stats import linregress
+from scipy.stats import ttest_ind
+import statsmodels.stats.multitest as smm
+import math
+
+#import 4 datasets and way to label with oncotree code
+dfPPC = pd.read_csv('/Users/erincoyne/Desktop/MSKCC data/debatched_zscores.csv')
+dfPrism = pd.read_csv('/Users/erincoyne/Desktop/Drug_sensitivity_(PRISM_Repurposing_Primary_Screen).csv')
+dfGDSC = pd.read_csv('/Users/erincoyne/Desktop/merged.csv')
+dfCTD = pd.read_csv('/Users/erincoyne/Desktop/Drug_sensitivity_AUC_(CTD^2).csv')
+dfOnco = pd.read_csv('/Users/erincoyne/Desktop/celllin&onco.csv')
+dfDrugRegimine = pd.read_csv('/Users/erincoyne/Desktop/PreferredRegimine.csv')
+
+dfCTDWOnco = pd.merge(dfOnco, dfCTD, on='cell_line_display_name', how='inner')
+dfPrismWOnco = pd.merge(dfOnco, dfPrism, on='cell_line_display_name', how='inner')
+
+#make dct for preferred treatment
+
+StandardCareDct = {}
+for _, row in dfDrugRegimine.iterrows():
+    cancer = row['CancerType']
+    drug = row['PreferredRegimine']
+    
+    if cancer in StandardCareDct:
+        StandardCareDct[cancer].append(drug)
+    else:
+        StandardCareDct[cancer] = [drug]
+
+#take out unneeded columns + universalize capitalization (adhere to PPC)
+#fill NA values with 0 – later taken out
+
+dfGDSC.columns = dfGDSC.columns.str.lower().str.split().str[0]
+dfGDSC.columns = dfGDSC.columns.str.capitalize()
+dfGDSC = dfGDSC.replace('', np.nan).fillna(0.0)
+columns_to_drop = ['Unnamed:','Cell_line_display_name', 'Depmap_id', 'Lineage_1', 'Lineage_2', 'Lineage_3', 'Lineage_4', 'Lineage_5', 'Lineage_6',
+                  'Name', 'Cellosaurus_id']
+dfGDSC = dfGDSC.drop(columns=columns_to_drop, inplace=False)
+
+dfPrismWOnco.columns = dfPrismWOnco.columns.str.lower().str.split().str[0]
+dfPrismWOnco.columns = dfPrismWOnco.columns.str.capitalize()
+dfPrismWOnco = dfPrismWOnco.replace('', np.nan).fillna(0.0)
+columns_to_drop = ['Cell_line_display_name', 'Depmap_id', 'Lineage_1', 'Lineage_2', 'Lineage_3', 'Lineage_4', 'Lineage_5', 'Lineage_6']
+dfPrismWOnco = dfPrismWOnco.drop(columns=columns_to_drop, inplace=False)
+
+dfCTDWOnco.columns = dfCTDWOnco.columns.str.lower().str.split().str[0]
+dfCTDWOnco.columns = dfCTDWOnco.columns.str.capitalize()
+dfCTDWOnco = dfCTDWOnco.replace('', np.nan).fillna(0.0)
+columns_to_drop = ['Cell_line_display_name', 'Depmap_id', 'Lineage_1', 'Lineage_2', 'Lineage_3', 'Lineage_4', 'Lineage_5', 'Lineage_6']
+dfCTDWOnco = dfCTDWOnco.drop(columns=columns_to_drop, inplace=False)
+
+
+#combine/replace oncotree codes
+dfPPC['oncotree_code'] = dfPPC['oncotree_code'].replace('AASTR', 'GBM')
+dfPPC['oncotree_code'] = dfPPC['oncotree_code'].replace('MEL', 'SKCM')
+dfPPC['oncotree_code'] = dfPPC['oncotree_code'].replace('BRCANOS', 'BRCA')
+dfPPC['oncotree_code'] = dfPPC['oncotree_code'].replace('IDC', 'BRCA')
+dfPPC['oncotree_code'] = dfPPC['oncotree_code'].replace('COADREAD', 'COAD')
+dfPPC['oncotree_code'] = dfPPC['oncotree_code'].replace('READ', 'COAD')
+dfPPC['oncotree_code'] = dfPPC['oncotree_code'].replace('UEC', 'UCEC')
+dfPPC['oncotree_code'] = dfPPC['oncotree_code'].replace('OCSC', 'HNSC')
+
+dfPrismWOnco['Oncotree_code'] = dfPrismWOnco['Oncotree_code'].replace('AASTR', 'GBM')
+dfPrismWOnco['Oncotree_code'] = dfPrismWOnco['Oncotree_code'].replace('MEL', 'SKCM')
+dfPrismWOnco['Oncotree_code'] = dfPrismWOnco['Oncotree_code'].replace('IDC', 'BRCA')
+dfPrismWOnco['Oncotree_code'] = dfPrismWOnco['Oncotree_code'].replace('READ', 'COAD')
+dfPrismWOnco['Oncotree_code'] = dfPrismWOnco['Oncotree_code'].replace('OCSC', 'HNSC')
+
+dfGDSC['Oncotree_code'] = dfGDSC['Oncotree_code'].replace('AASTR', 'GBM')
+dfGDSC['Oncotree_code'] = dfGDSC['Oncotree_code'].replace('MEL', 'SKCM')
+dfGDSC['Oncotree_code'] = dfGDSC['Oncotree_code'].replace('IDC', 'BRCA')
+dfGDSC['Oncotree_code'] = dfGDSC['Oncotree_code'].replace('READ', 'COAD')
+dfGDSC['Oncotree_code'] = dfGDSC['Oncotree_code'].replace('OCSC', 'HNSC')
+
+dfCTDWOnco['Oncotree_code'] = dfCTDWOnco['Oncotree_code'].replace('AASTR', 'GBM')
+dfCTDWOnco['Oncotree_code'] = dfCTDWOnco['Oncotree_code'].replace('MEL', 'SKCM')
+dfCTDWOnco['Oncotree_code'] = dfCTDWOnco['Oncotree_code'].replace('IDC', 'BRCA')
+dfCTDWOnco['Oncotree_code'] = dfCTDWOnco['Oncotree_code'].replace('READ', 'COAD')
+dfCTDWOnco['Oncotree_code'] = dfCTDWOnco['Oncotree_code'].replace('OCSC', 'HNSC')
+
+
+#make list of drug and cancer types for each dataset ('Oncotree_Code' included)
+PPCdrugs = set(dfPPC['drug_name'])
+GDSCdrugs = dfGDSC.columns
+PRISMdrugs = dfPrismWOnco.columns
+CTDdrugs = dfCTDWOnco.columns
+
+PPCcancer = set(dfPPC['oncotree_code'])
+GDSCcancer = set(dfGDSC['Oncotree_code'])
+PRISMcancer = set(dfPrismWOnco['Oncotree_code'])
+CTDcancer = set(dfCTDWOnco['Oncotree_code'])
